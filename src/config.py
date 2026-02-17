@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -34,10 +35,14 @@ class AppSettings:
         ):
             raise ValueError(f"Invalid run mode: {self.run_mode}")
 
+        # 🔐 Streamlit-safe: accept keys from config OR environment
+        openai_key = self.openai_api_key or os.getenv("OPENAI_API_KEY", "")
+        gemini_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY", "")
+
         if self.run_mode in ("Compare (Gemini vs OpenAI)", "OpenAI only"):
-            if not self.openai_api_key:
+            if not openai_key:
                 raise ValueError("Missing OpenAI API key.")
 
         if self.run_mode in ("Compare (Gemini vs OpenAI)", "Gemini only"):
-            if not self.gemini_api_key:
+            if not gemini_key:
                 raise ValueError("Missing Gemini API key.")
