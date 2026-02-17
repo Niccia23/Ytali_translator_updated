@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-@dataclass(frozen=True)
+@dataclass
 class AppSettings:
     header_logo_path: Optional[str]
     watermark_logo_path: Optional[str]

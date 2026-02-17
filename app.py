@@ -135,7 +135,7 @@ def sidebar_settings() -> AppSettings:
         or gemini_key.strip(),
 
     run_mode=mode,
-    chunk_chars=None,
+    chunk_chars=9000,
     compare_first_n_chunks=None,
     save_local=False,
     debug=debug,
