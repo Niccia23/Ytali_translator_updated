@@ -1,17 +1,14 @@
-from datetime import datetime
-
-import streamlit as st
 import os
 import streamlit as st
 
-# Streamlit secrets available as env vars
+# 🔐 Inject Streamlit secrets into environment BEFORE any OpenAI imports
 if "OPENAI_API_KEY" in st.secrets:
     os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 
 if "GEMINI_API_KEY" in st.secrets:
     os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 
-
+from datetime import datetime
 from src.ui import apply_enterprise_ui, render_topbar
 from src.text_utils import safe_decode
 from src.config import AppSettings
