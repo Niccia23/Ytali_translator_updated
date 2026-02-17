@@ -198,6 +198,13 @@ def main():
         st.session_state["pasted_text"] = pasted
         progress = st.progress(0, text="Translating…")
 
+        if "OPENAI_API_KEY" in st.secrets:
+            cfg.openai_api_key = st.secrets["OPENAI_API_KEY"]
+
+        if "GEMINI_API_KEY" in st.secrets:
+            cfg.gemini_api_key = st.secrets["GEMINI_API_KEY"]
+
+
         results = run_translation(
             settings=cfg,
             chunks=[input_text],  # NO CHUNKING
