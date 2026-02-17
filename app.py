@@ -96,7 +96,7 @@ def sidebar_settings() -> AppSettings:
     st.divider()
 
     st.markdown("### Providers")
-    
+
     openai_key = secrets.get("OPENAI_API_KEY") or st.text_input(
         "OpenAI API key",
         value="",
@@ -122,18 +122,27 @@ def sidebar_settings() -> AppSettings:
         debug = st.toggle("Show debug info", False)
 
     return AppSettings(
-        header_logo_path=header_logo_path or None,
-        watermark_logo_path=watermark_logo_path or None,
-        watermark_size_px=watermark_size_px,
-        watermark_opacity=watermark_opacity,
-        openai_api_key=openai_key.strip(),
-        gemini_api_key=gemini_key.strip(),
-        run_mode=mode,
-        chunk_chars=None,
-        compare_first_n_chunks=None,
-        save_local=False,
-        debug=debug,
-    )
+    header_logo_path=header_logo_path or None,
+    watermark_logo_path=watermark_logo_path or None,
+    watermark_size_px=watermark_size_px,
+    watermark_opacity=watermark_opacity,
+
+    # 🔐 FORCE secrets if available (Streamlit Cloud safe)
+    openai_api_key=secrets.get("OPENAI_API_KEY", "").strip()
+        or openai_key.strip(),
+
+    gemini_api_key=secrets.get("GEMINI_API_KEY", "").strip()
+        or gemini_key.strip(),
+
+    run_mode=mode,
+    chunk_chars=None,
+    compare_first_n_chunks=None,
+    save_local=False,
+    debug=debug,
+)
+
+
+
 
 
 # -------------------------
