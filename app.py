@@ -96,16 +96,19 @@ def sidebar_settings() -> AppSettings:
     st.divider()
 
     st.markdown("### Providers")
-    openai_key = st.text_input(
+    
+    openai_key = secrets.get("OPENAI_API_KEY") or st.text_input(
         "OpenAI API key",
-        value=secrets.get("OPENAI_API_KEY", ""),
+        value="",
         type="password",
     )
-    gemini_key = st.text_input(
+
+    gemini_key = secrets.get("GEMINI_API_KEY") or st.text_input(
         "Gemini API key",
-        value=secrets.get("GEMINI_API_KEY", ""),
+        value="",
         type="password",
     )
+
 
     mode = st.radio(
         "Run mode",
