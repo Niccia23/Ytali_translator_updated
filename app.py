@@ -1,4 +1,5 @@
 import os
+import json
 import streamlit as st
 
 # 🔐 Inject Streamlit secrets into environment BEFORE any OpenAI imports
@@ -9,12 +10,13 @@ if "GEMINI_API_KEY" in st.secrets:
     os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 
 from datetime import datetime
+from typing import List, Dict, Any
+
 from src.ui import apply_enterprise_ui, render_topbar
 from src.text_utils import safe_decode
 from src.config import AppSettings
 from src.translate import run_translation
 from src.editor import copyedit_and_generate_titles
-from typing import List
 
 APP_TITLE = "YTALI Translator (IT ↔ EN) — Gemini 2.5 Flash vs GPT-5.2"
 
@@ -35,40 +37,129 @@ def _load_input_text(uploaded) -> str:
     return safe_decode(uploaded.read()).strip()
 
 
-def safe_copyedit(text: str, target_language: str) -> dict:
+def _strip_json_fence(s: str) -> str:
+    s = (s or "").strip()
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    return s
+
+
+def _try_parse_json_obj(s: str):
+    s2 = _strip_json_fence(s).strip()
+    if s2.startswith("{") and s2.endswith("}"):
+        try:
+            return json.loads(s2)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _coerce_editor_result(result: Any) -> Dict[str, Any]:
+    """
+    Normalize editor output to a dict:
+    - Accept dict OR JSON-string (possibly fenced)
+    - If edited_text is itself JSON (possibly fenced), unwrap it
+    - Ensure edited_text is a string
+    - Ensure title_suggestions is a list[str]
+    """
+    # If editor returned a JSON-ish string, parse it
+    if isinstance(result, str):
+        parsed = _try_parse_json_obj(result)
+        if parsed is None:
+            raise ValueError("Editor returned non-JSON string")
+        result = parsed
+
+    if not isinstance(result, dict):
+        raise ValueError(f"Editor returned non-dict: {type(result)}")
+
+    edited_text = result.get("edited_text", "")
+    titles = result.get("title_suggestions", [])
+
+    # If edited_text accidentally contains the full JSON object as a string, unwrap it
+    if isinstance(edited_text, str):
+        inner = _try_parse_json_obj(edited_text)
+        if isinstance(inner, dict) and ("edited_text" in inner or "title_suggestions" in inner):
+            edited_text = inner.get("edited_text", edited_text)
+            inner_titles = inner.get("title_suggestions", None)
+            if isinstance(inner_titles, list):
+                titles = inner_titles
+
+    if isinstance(edited_text, dict):
+        edited_text = edited_text.get("edited_text") or json.dumps(edited_text, ensure_ascii=False)
+
+    if not isinstance(edited_text, str):
+        edited_text = str(edited_text)
+
+    if not isinstance(titles, list):
+        titles = []
+    titles = [t.strip() for t in titles if isinstance(t, str) and t.strip()]
+
+    return {"edited_text": edited_text, "title_suggestions": titles}
+
+
+def safe_copyedit(text: str, target_language: str, debug: bool = False) -> dict:
     """
     Runs copyediting safely.
     Never crashes if the model returns invalid / empty JSON.
+    Shows exception details when debug is enabled.
     """
     try:
-        result = copyedit_and_generate_titles(
+        raw = copyedit_and_generate_titles(
             text=text,
             target_language=target_language,
         )
-        if not isinstance(result, dict) or "edited_text" not in result:
-            raise ValueError("Invalid editor output")
-        return result
-    except Exception:
+        return _coerce_editor_result(raw)
+    except Exception as e:
+        if debug:
+            st.exception(e)
         return {
             "edited_text": text,
             "title_suggestions": [],
         }
 
 
-def generate_titles_only(text: str, target_language: str) -> List[str]:
+def generate_titles_only(text: str, target_language: str, debug: bool = False) -> List[str]:
     """
     Best-effort title generation retry.
     Never crashes.
+    Shows exception details when debug is enabled.
     """
     try:
-        result = copyedit_and_generate_titles(
+        raw = copyedit_and_generate_titles(
             text=text,
             target_language=target_language,
         )
-        titles = result.get("title_suggestions", [])
-        return titles if isinstance(titles, list) else []
-    except Exception:
+        data = _coerce_editor_result(raw)
+        return data.get("title_suggestions", [])
+    except Exception as e:
+        if debug:
+            st.exception(e)
         return []
+
+
+def direction_to_language(direction: str) -> str:
+    """
+    Convert direction labels (e.g. 'IT→EN', 'it_to_en') into a language name
+    for the editor prompts (e.g. 'English', 'Italian').
+    """
+    d = (direction or "").strip().lower()
+
+    if ("to_en" in d) or ("->en" in d) or ("→en" in d) or d.endswith("en"):
+        return "English"
+    if ("to_it" in d) or ("->it" in d) or ("→it" in d) or d.endswith("it"):
+        return "Italian"
+
+    if "english" in d:
+        return "English"
+    if "italian" in d:
+        return "Italian"
+
+    return direction
 
 
 # -------------------------
@@ -109,7 +200,6 @@ def sidebar_settings() -> AppSettings:
         type="password",
     )
 
-
     mode = st.radio(
         "Run mode",
         ["Compare (Gemini vs OpenAI)", "Gemini only", "OpenAI only"],
@@ -122,27 +212,21 @@ def sidebar_settings() -> AppSettings:
         debug = st.toggle("Show debug info", False)
 
     return AppSettings(
-    header_logo_path=header_logo_path or None,
-    watermark_logo_path=watermark_logo_path or None,
-    watermark_size_px=watermark_size_px,
-    watermark_opacity=watermark_opacity,
+        header_logo_path=header_logo_path or None,
+        watermark_logo_path=watermark_logo_path or None,
+        watermark_size_px=watermark_size_px,
+        watermark_opacity=watermark_opacity,
 
-    # 🔐 FORCE secrets if available (Streamlit Cloud safe)
-    openai_api_key=secrets.get("OPENAI_API_KEY", "").strip()
-        or openai_key.strip(),
+        # 🔐 FORCE secrets if available (Streamlit Cloud safe)
+        openai_api_key=secrets.get("OPENAI_API_KEY", "").strip() or openai_key.strip(),
+        gemini_api_key=secrets.get("GEMINI_API_KEY", "").strip() or gemini_key.strip(),
 
-    gemini_api_key=secrets.get("GEMINI_API_KEY", "").strip()
-        or gemini_key.strip(),
-
-    run_mode=mode,
-    chunk_chars=9000,
-    compare_first_n_chunks=None,
-    save_local=False,
-    debug=debug,
-)
-
-
-
+        run_mode=mode,
+        chunk_chars=9000,
+        compare_first_n_chunks=None,
+        save_local=False,
+        debug=debug,
+    )
 
 
 # -------------------------
@@ -198,12 +282,11 @@ def main():
         st.session_state["pasted_text"] = pasted
         progress = st.progress(0, text="Translating…")
 
+        # Ensure keys are loaded into cfg (Streamlit Cloud)
         if "OPENAI_API_KEY" in st.secrets:
             cfg.openai_api_key = st.secrets["OPENAI_API_KEY"]
-
         if "GEMINI_API_KEY" in st.secrets:
             cfg.gemini_api_key = st.secrets["GEMINI_API_KEY"]
-
 
         results = run_translation(
             settings=cfg,
@@ -213,6 +296,7 @@ def main():
 
         detected = results.get("_meta", {}).get("detected_language")
         direction = results.get("_meta", {}).get("direction") or ""
+        target_lang = direction_to_language(direction)
 
         edited_outputs = {}
 
@@ -220,20 +304,20 @@ def main():
             if label == "_meta":
                 continue
 
-            edited_literal = safe_copyedit(out["literal"], direction)
-            edited_neutral = safe_copyedit(out["neutral"], direction)
+            edited_literal = safe_copyedit(out["literal"], target_lang, debug=cfg.debug)
+            edited_neutral = safe_copyedit(out["neutral"], target_lang, debug=cfg.debug)
 
             titles = edited_neutral.get("title_suggestions", [])
-
 
             # Retry titles explicitly if missing
             if not titles:
                 titles = generate_titles_only(
                     text=edited_neutral["edited_text"],
-                    target_language=direction,
+                    target_language=target_lang,
+                    debug=cfg.debug,
                 )
 
-            # only one title
+            # Only one title
             titles = titles[:1]
 
             edited_outputs[label] = {
@@ -241,6 +325,15 @@ def main():
                 "neutral": edited_neutral["edited_text"],
                 "titles": titles,
             }
+
+            if cfg.debug:
+                with st.expander(f"DEBUG editor output ({label})", expanded=False):
+                    st.write("direction:", direction)
+                    st.write("target_lang:", target_lang)
+                    st.write("titles:", titles)
+                    st.write("edited_neutral keys:", list(edited_neutral.keys()))
+                    st.write("edited_neutral title_suggestions:", edited_neutral.get("title_suggestions"))
+                    st.write("edited_neutral edited_text preview:", edited_neutral.get("edited_text", "")[:200])
 
         st.session_state["results"] = results
         st.session_state["edited_outputs"] = edited_outputs
@@ -289,10 +382,9 @@ def main():
         )
 
     if cfg.debug:
-        st.markdown("### Debug")
+        st.markdown("### Debug (_meta)")
         st.json(results.get("_meta", {}))
 
 
 if __name__ == "__main__":
     main()
-
